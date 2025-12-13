@@ -29,6 +29,7 @@ jobs:
           
           # Install FFUF
           go install github.com/ffuf/ffuf/v2@latest
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
       # 2. Generate Your Custom Wordlist
       - name: Generate Custom Wordlist
