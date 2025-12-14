@@ -7,6 +7,18 @@ on:
         description: 'Target URL (e.g., https://example.com/FUZZ)'
         required: true
         default: 'https://example.com/FUZZ'
+      filter_codes:
+        description: 'Status Codes to Hide (-fc) (e.g. 404,429)'
+        required: false
+        default: '404,429'
+      filter_sizes:
+        description: 'Response Sizes to Hide (-fs) (e.g. 0,154)'
+        required: false
+        default: ''
+      discord_rate:
+        description: 'Discord Rate Limit Delay in ms (-dr)'
+        required: false
+        default: '500'
 
 jobs:
   scan:
@@ -26,17 +38,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y crunch
-          
-          # Install FFUF
           go install github.com/ffuf/ffuf/v2@latest
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
       # 2. Generate Your Custom Wordlist
       - name: Generate Custom Wordlist
         run: |
-          echo "Starting wordlist generation..."
-          
-          # --- DOWNLOAD SOURCES ---
+          echo "Generating wordlist..."
           curl -s https://wordlists-cdn.assetnote.io/data/manual/wordlist_with_underscores.txt > wlist2.txt
           crunch 1 3 abcdefghijklmnopqrstuvwxyz1234567890_-. > 1to3chars.txt
           curl -s https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/directory-list-lowercase-2.3-big.txt > wlist1.txt
@@ -45,20 +53,17 @@ jobs:
           curl -s https://raw.githubusercontent.com/mehrankazemi1122/biology_Fuzz/main/port_numbers.txt > port_numbers.txt
           curl -s https://raw.githubusercontent.com/PortSwigger/param-miner/master/resources/words | sort -u > words.txt
           
-          # --- CLEANUP ---
           sed -i 's/^\///' all_dirs.txt
           sed -i 's/^\///' wlist1.txt
           
-          # --- MERGE ---
           cat all_dirs.txt wlist1.txt wlist2.txt 1to3chars.txt words.txt | sort -u > full.txt
           
-          echo "Wordlist generated. Total lines:"
+          echo "Total lines:"
           wc -l full.txt
 
-      # 3. Split the generated 'full.txt'
+      # 3. Split Wordlist
       - name: Split Wordlist
         run: |
-          # Split full.txt into 10 parts
           split -d -n l/10 full.txt chunk_
 
       # 4. Run FFUF
@@ -67,8 +72,7 @@ jobs:
           CURRENT_CHUNK="chunk_${{ matrix.id }}"
           echo "Scanning with $CURRENT_CHUNK..."
           
-          # Run FFUF
-          # Note: Added -mc all -sa -s per your request
+          # Note: We run FFUF with -mc all (match all) so we can filter later in the Python script
           ffuf -u "${{ inputs.target_url }}" -w $CURRENT_CHUNK -o result_${{ matrix.id }}.json -of json -mc all -sa -s
 
       # 5. Upload Partial Results
@@ -110,8 +114,7 @@ jobs:
           name: Complete-Scan-Report
           path: final_report.json
 
-      # --- NEW SECTION: DISCORD NOTIFICATION ---
-      
+      # --- DISCORD PROCESSING ---
       - name: Install Python Requests
         run: pip install requests
 
@@ -186,11 +189,9 @@ jobs:
 
       - name: Send to Discord
         run: |
-          # Running the script
-          # -fc 404,429: Filters out Not Found and Rate Limited responses
-          # -dr 500: Waits 0.5 seconds between Discord messages to be safe
-          
+          # Use the inputs provided in the workflow dispatch UI
           python3 process_results.py final_report.json \
-            -fc 404,429 \
-            -dr 1000 \
+            -fc "${{ inputs.filter_codes }}" \
+            -fs "${{ inputs.filter_sizes }}" \
+            -dr "${{ inputs.discord_rate }}" \
             -dw "${{ secrets.DISCORD_WEBHOOK }}"
