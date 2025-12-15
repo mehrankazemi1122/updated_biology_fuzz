@@ -74,7 +74,7 @@ jobs:
           echo "Scanning with $CURRENT_CHUNK..."
           
           # Run FFUF with match-all (-mc all) so we can filter later
-          ffuf -u "${{ inputs.target_url }}" -w $CURRENT_CHUNK -o result_${{ matrix.id }}.json -of json -mc all -sa -s -maxtime 21300
+          ffuf -u "${{ inputs.target_url }}" -w $CURRENT_CHUNK -o result_${{ matrix.id }}.json -of json -mc all -sf -s -maxtime 21300
 
       # 5. Upload Partial Results
       - name: Upload Chunk Artifact
