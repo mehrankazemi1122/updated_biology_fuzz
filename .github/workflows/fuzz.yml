@@ -1,4 +1,4 @@
-name: Parallel FFUF (Custom Wordlist + Discord)
+name: Parallel FFUF (20x Speed + Discord)
 
 on:
   workflow_dispatch:
@@ -26,8 +26,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 10 Parallel chunks. 
-        id: ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09']
+        # 20 Parallel chunks (Optimal for Free/Pro Plan)
+        id: ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19']
 
     steps:
       - name: Checkout Repo
@@ -41,7 +41,7 @@ jobs:
           go install github.com/ffuf/ffuf/v2@latest
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
-      # 2. Generate Your Custom Wordlist
+      # 2. Generate Custom Wordlist
       - name: Generate Custom Wordlist
         run: |
           echo "Generating wordlist..."
@@ -61,10 +61,11 @@ jobs:
           echo "Total lines:"
           wc -l full.txt
 
-      # 3. Split Wordlist
+      # 3. Split Wordlist (20 Parts)
       - name: Split Wordlist
         run: |
-          split -d -n l/10 full.txt chunk_
+          # Split full.txt into 20 equal parts based on the matrix size
+          split -d -n l/20 full.txt chunk_
 
       # 4. Run FFUF
       - name: Run FFUF (Chunk ${{ matrix.id }})
@@ -72,8 +73,8 @@ jobs:
           CURRENT_CHUNK="chunk_${{ matrix.id }}"
           echo "Scanning with $CURRENT_CHUNK..."
           
-          # Note: We run FFUF with -mc all (match all) so we can filter later in the Python script
-          ffuf -u "${{ inputs.target_url }}" -w $CURRENT_CHUNK -o result_${{ matrix.id }}.json -of json -mc all -sf -s
+          # Run FFUF with match-all (-mc all) so we can filter later
+          ffuf -u "${{ inputs.target_url }}" -w $CURRENT_CHUNK -o result_${{ matrix.id }}.json -of json -mc all -sa -s -maxtime 21300
 
       # 5. Upload Partial Results
       - name: Upload Chunk Artifact
