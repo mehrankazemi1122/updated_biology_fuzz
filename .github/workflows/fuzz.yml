@@ -15,6 +15,10 @@ on:
         description: 'Response Sizes to Hide (-fs) (e.g. 0,154)'
         required: false
         default: ''
+      filter_words:
+        description: 'Response Word Counts to Hide (-fw) (e.g. 5,100)'
+        required: false
+        default: ''
       discord_rate:
         description: 'Discord Rate Limit Delay in ms (-dr)'
         required: false
@@ -148,12 +152,14 @@ jobs:
               parser.add_argument("file")
               parser.add_argument("-fc", "--filter-code")
               parser.add_argument("-fs", "--filter-size")
+              parser.add_argument("-fw", "--filter-word") # Added FW argument
               parser.add_argument("-dw", "--discord-webhook")
               parser.add_argument("-dr", "--discord-rate", type=int, default=0)
               args = parser.parse_args()
 
               filter_codes = parse_filter_list(args.filter_code)
               filter_sizes = parse_filter_list(args.filter_size)
+              filter_words = parse_filter_list(args.filter_word) # Parse FW list
 
               try:
                   with open(args.file, 'r') as f: data = json.load(f)
@@ -167,12 +173,14 @@ jobs:
               for item in results:
                   status = item.get("status", 0)
                   size = item.get("length", 0)
+                  words = item.get("words", 0) # Get word count
                   
+                  # Apply Filters
                   if status in filter_codes: continue
                   if size in filter_sizes: continue
+                  if words in filter_words: continue # Apply FW filter
 
                   full_url = item.get("url", "UNKNOWN_URL")
-                  words = item.get("words", 0)
                   lines = item.get("lines", 0)
                   dur = format_duration(item.get("duration", 0))
 
@@ -194,5 +202,6 @@ jobs:
           python3 process_results.py final_report.json \
             -fc "${{ inputs.filter_codes }}" \
             -fs "${{ inputs.filter_sizes }}" \
+            -fw "${{ inputs.filter_words }}" \
             -dr "${{ inputs.discord_rate }}" \
             -dw "${{ secrets.DISCORD_WEBHOOK }}"
