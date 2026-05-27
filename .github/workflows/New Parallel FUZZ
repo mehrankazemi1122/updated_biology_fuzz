@@ -1,0 +1,211 @@
+see this github action workflow and analyze it fully for yourself:
+```
+name: Parallel FFUF (20x Speed + Discord)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'Target URL (e.g., https://example.com/FUZZ)'
+        required: true
+        default: 'https://example.com/FUZZ'
+      filter_codes:
+        description: 'Status Codes to Hide (-fc) (e.g. 404,429)'
+        required: false
+        default: '404,429'
+      filter_sizes:
+        description: 'Response Sizes to Hide (-fs) (e.g. 0,154)'
+        required: false
+        default: ''
+      filter_words:
+        description: 'Response Word Counts to Hide (-fw) (e.g. 5,100)'
+        required: false
+        default: ''
+      discord_rate:
+        description: 'Discord Rate Limit Delay in ms (-dr)'
+        required: false
+        default: '500'
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 Parallel chunks (Optimal for Free/Pro Plan)
+        id: ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19']
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      # 1. Install Tools (FFUF + Crunch)
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y crunch
+          go install github.com/ffuf/ffuf/v2@latest
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      # 2. Generate Custom Wordlist
+      - name: Generate Custom Wordlist
+        run: |
+          echo "Generating wordlist..."
+          curl -s https://wordlists-cdn.assetnote.io/data/manual/wordlist_with_underscores.txt > wlist2.txt
+          crunch 1 3 abcdefghijklmnopqrstuvwxyz1234567890_-. > 1to3chars.txt
+          curl -s https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/directory-list-lowercase-2.3-big.txt > wlist1.txt
+          curl -s https://wordlists-cdn.assetnote.io/data/manual/jsp.txt > jsp.txt
+          curl -s https://wordlists-cdn.assetnote.io/data/automated/httparchive_directories_1m_2024_05_28.txt > all_dirs.txt
+          curl -s https://raw.githubusercontent.com/mehrankazemi1122/biology_Fuzz/main/port_numbers.txt > port_numbers.txt
+          curl -s https://raw.githubusercontent.com/PortSwigger/param-miner/master/resources/words | sort -u > words.txt
+          
+          sed -i 's/^\///' all_dirs.txt
+          sed -i 's/^\///' wlist1.txt
+          
+          cat all_dirs.txt wlist1.txt wlist2.txt 1to3chars.txt words.txt | sort -u > full.txt
+          
+          echo "Total lines:"
+          wc -l full.txt
+
+      # 3. Split Wordlist (20 Parts)
+      - name: Split Wordlist
+        run: |
+          # Split full.txt into 20 equal parts based on the matrix size
+          split -d -n l/20 full.txt chunk_
+
+      # 4. Run FFUF
+      - name: Run FFUF (Chunk ${{ matrix.id }})
+        run: |
+          CURRENT_CHUNK="chunk_${{ matrix.id }}"
+          echo "Scanning with $CURRENT_CHUNK..."
+          
+          # Run FFUF with match-all (-mc all) so we can filter later
+          ffuf -u "${{ inputs.target_url }}" -w $CURRENT_CHUNK -o result_${{ matrix.id }}.json -of json -mc all -s -maxtime 21300
+
+      # 5. Upload Partial Results
+      - name: Upload Chunk Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chunk-results-${{ matrix.id }}
+          path: result_${{ matrix.id }}.json
+
+  # MERGE AND NOTIFY JOB
+  merge:
+    needs: scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download All Results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: chunk-results-*
+          merge-multiple: true
+
+      - name: Merge JSON Reports
+        run: |
+          python3 -c "
+          import json, glob
+          all_findings = []
+          for f in glob.glob('result_*.json'):
+              try:
+                  data = json.load(open(f))
+                  if 'results' in data:
+                      all_findings.extend(data['results'])
+              except: pass
+          final_output = {'ffuf_merged_results': all_findings}
+          print(json.dumps(final_output, indent=2))
+          " > final_report.json
+
+      - name: Upload Final Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: Complete-Scan-Report
+          path: final_report.json
+
+      # --- DISCORD PROCESSING ---
+      - name: Install Python Requests
+        run: pip install requests
+
+      - name: Create Processor Script
+        run: |
+          cat <<EOF > process_results.py
+          import json, sys, argparse, time
+          from collections import Counter
+          try:
+              import requests
+          except ImportError:
+              sys.exit(1)
+
+          def format_duration(nanoseconds):
+              milliseconds = nanoseconds / 1_000_000
+              return f"{int(milliseconds)}ms"
+
+          def parse_filter_list(arg_str):
+              if not arg_str: return set()
+              try: return {int(x.strip()) for x in arg_str.split(',')}
+              except: return set()
+
+          def send_to_discord(webhook_url, message):
+              data = {"content": f"\`\`\`\n{message}\n\`\`\`"}
+              try: requests.post(webhook_url, json=data)
+              except: pass
+
+          def main():
+              parser = argparse.ArgumentParser()
+              parser.add_argument("file")
+              parser.add_argument("-fc", "--filter-code")
+              parser.add_argument("-fs", "--filter-size")
+              parser.add_argument("-fw", "--filter-word") # Added FW argument
+              parser.add_argument("-dw", "--discord-webhook")
+              parser.add_argument("-dr", "--discord-rate", type=int, default=0)
+              args = parser.parse_args()
+
+              filter_codes = parse_filter_list(args.filter_code)
+              filter_sizes = parse_filter_list(args.filter_size)
+              filter_words = parse_filter_list(args.filter_word) # Parse FW list
+
+              try:
+                  with open(args.file, 'r') as f: data = json.load(f)
+              except: return
+
+              results = data.get("ffuf_merged_results", data.get("results", []))
+              if not results: return
+
+              print(f"Processing {len(results)} results...")
+
+              for item in results:
+                  status = item.get("status", 0)
+                  size = item.get("length", 0)
+                  words = item.get("words", 0) # Get word count
+                  
+                  # Apply Filters
+                  if status in filter_codes: continue
+                  if size in filter_sizes: continue
+                  if words in filter_words: continue # Apply FW filter
+
+                  full_url = item.get("url", "UNKNOWN_URL")
+                  lines = item.get("lines", 0)
+                  dur = format_duration(item.get("duration", 0))
+
+                  output_line = f"{full_url:<60} [Status: {status}, Size: {size}, Words: {words}, Lines: {lines}, Duration: {dur}]"
+                  print(output_line)
+
+                  if args.discord_webhook:
+                      send_to_discord(args.discord_webhook, output_line)
+                      if args.discord_rate > 0:
+                          time.sleep(args.discord_rate / 1000.0)
+
+          if __name__ == "__main__":
+              main()
+          EOF
+
+      - name: Send to Discord
+        run: |
+          # Use the inputs provided in the workflow dispatch UI
+          python3 process_results.py final_report.json \
+            -fc "${{ inputs.filter_codes }}" \
+            -fs "${{ inputs.filter_sizes }}" \
+            -fw "${{ inputs.filter_words }}" \
+            -dr "${{ inputs.discord_rate }}" \
+            -dw "${{ secrets.DISCORD_WEBHOOK }}"
+
+```
