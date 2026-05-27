@@ -1,5 +1,3 @@
-see this github action workflow and analyze it fully for yourself:
-```
 name: Parallel FFUF (20x Speed + Discord)
 
 on:
