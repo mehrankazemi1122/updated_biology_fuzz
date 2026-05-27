@@ -1,4 +1,4 @@
-name: Parallel FFUF (20x Speed + Discord)
+name: Parallel FFUF (20x Speed + Discord) version 2
 
 on:
   workflow_dispatch:
