@@ -1,4 +1,4 @@
-name: Parallel FFUF (20x Speed + Discord) Version 2
+name: Parallel FFUF (20x Speed + Discord)
 
 on:
   workflow_dispatch:
@@ -7,26 +7,14 @@ on:
         description: 'Target URL (e.g., https://example.com/FUZZ)'
         required: true
         default: 'https://example.com/FUZZ'
-      filter_codes:
-        description: 'Status Codes to Hide (-fc)'
+      extra_flags:
+        description: 'FFUF Flags (e.g., -mc all -fc 404,429 -fs 0)'
         required: false
-        default: '404,429'
-      filter_sizes:
-        description: 'Response Sizes to Hide (-fs)'
-        required: false
-        default: ''
-      filter_words:
-        description: 'Response Word Counts to Hide (-fw)'
-        required: false
-        default: ''
+        default: '-mc all -fc 404,429'
       discord_rate:
         description: 'Discord Rate Limit Delay in ms (-dr)'
         required: false
-        default: '500'
-      extra_flags:
-        description: 'Arbitrary FFUF flags'
-        required: false
-        default: ''
+        default: '2000'
 
 jobs:
   prepare_wordlist:
@@ -37,7 +25,6 @@ jobs:
 
       - name: Generate and Combine Wordlists
         run: |
-          echo "Downloading wordlists..."
           curl -s https://wordlists-cdn.assetnote.io/data/manual/wordlist_with_underscores.txt > wlist2.txt
           crunch 1 3 abcdefghijklmnopqrstuvwxyz1234567890_-. > 1to3chars.txt
           curl -s https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/directory-list-lowercase-2.3-big.txt > wlist1.txt
@@ -46,15 +33,10 @@ jobs:
           curl -s https://raw.githubusercontent.com/mehrankazemi1122/biology_Fuzz/main/port_numbers.txt > port_numbers.txt
           curl -s https://raw.githubusercontent.com/PortSwigger/param-miner/master/resources/words | LC_ALL=C sort -u > words.txt
           
-          echo "Cleaning leading slashes..."
           sed -i 's/^\///' all_dirs.txt
           sed -i 's/^\///' wlist1.txt
           
-          echo "Concatenating and fast-sorting..."
           cat all_dirs.txt wlist1.txt wlist2.txt 1to3chars.txt words.txt | LC_ALL=C sort -u > full.txt
-          
-          echo "Total lines for Fuzzing:"
-          wc -l full.txt
 
       - name: Split Wordlist (20 Parts)
         run: |
@@ -94,9 +76,7 @@ jobs:
       - name: Run FFUF (Chunk ${{ matrix.id }})
         run: |
           CURRENT_CHUNK="chunks/chunk_${{ matrix.id }}"
-          echo "Scanning with $CURRENT_CHUNK..."
-          
-          ~/go/bin/ffuf -u "${{ inputs.target_url }}" -w $CURRENT_CHUNK -o result_${{ matrix.id }}.json -of json -mc all -s -maxtime 21300 ${{ inputs.extra_flags }}
+          ~/go/bin/ffuf -u "${{ inputs.target_url }}" -w $CURRENT_CHUNK -o result_${{ matrix.id }}.json -of json -s -maxtime 21300 ${{ inputs.extra_flags }}
 
       - name: Upload Chunk Artifact
         uses: actions/upload-artifact@v4
@@ -115,17 +95,15 @@ jobs:
           pattern: chunk-results-*
           merge-multiple: true
 
-      - name: Merge JSON Reports (Memory Efficient)
+      - name: Merge JSON Reports
         run: |
           cat << 'EOF' > merge_results.py
           import json, glob, gc
 
           with open('final_report.json', 'w') as out:
-              # Start the JSON structure manually
               out.write('{"ffuf_merged_results": [\n')
               first = True
               
-              # Process one file at a time to save memory
               for f in glob.glob('result_*.json'):
                   try:
                       with open(f, 'r') as infile:
@@ -135,14 +113,11 @@ jobs:
                                   out.write(',\n')
                               json.dump(item, out)
                               first = False
-                      
-                      # Force memory cleanup before the next file
                       del data
                       gc.collect()
-                  except Exception as e:
+                  except Exception:
                       pass
               
-              # Close the JSON structure
               out.write('\n]}\n')
           EOF
           python3 merge_results.py
@@ -170,11 +145,6 @@ jobs:
               milliseconds = nanoseconds / 1_000_000
               return f"{int(milliseconds)}ms"
 
-          def parse_filter_list(arg_str):
-              if not arg_str: return set()
-              try: return {int(x.strip()) for x in arg_str.split(',')}
-              except: return set()
-
           def send_to_discord(webhook_url, message):
               data = {"content": f"```\n{message}\n```"}
               try: requests.post(webhook_url, json=data)
@@ -183,16 +153,9 @@ jobs:
           def main():
               parser = argparse.ArgumentParser()
               parser.add_argument("file")
-              parser.add_argument("-fc", "--filter-code")
-              parser.add_argument("-fs", "--filter-size")
-              parser.add_argument("-fw", "--filter-word")
               parser.add_argument("-dw", "--discord-webhook")
               parser.add_argument("-dr", "--discord-rate", type=int, default=0)
               args = parser.parse_args()
-
-              filter_codes = parse_filter_list(args.filter_code)
-              filter_sizes = parse_filter_list(args.filter_size)
-              filter_words = parse_filter_list(args.filter_word)
 
               try:
                   with open(args.file, 'r') as f: data = json.load(f)
@@ -201,17 +164,10 @@ jobs:
               results = data.get("ffuf_merged_results", data.get("results", []))
               if not results: return
 
-              print(f"Processing {len(results)} results...")
-
               for item in results:
                   status = item.get("status", 0)
                   size = item.get("length", 0)
                   words = item.get("words", 0)
-                  
-                  if status in filter_codes: continue
-                  if size in filter_sizes: continue
-                  if words in filter_words: continue
-
                   full_url = item.get("url", "UNKNOWN_URL")
                   lines = item.get("lines", 0)
                   dur = format_duration(item.get("duration", 0))
@@ -231,8 +187,5 @@ jobs:
       - name: Send to Discord
         run: |
           python3 process_results.py final_report.json \
-            -fc "${{ inputs.filter_codes }}" \
-            -fs "${{ inputs.filter_sizes }}" \
-            -fw "${{ inputs.filter_words }}" \
             -dr "${{ inputs.discord_rate }}" \
             -dw "${{ secrets.DISCORD_WEBHOOK }}"
