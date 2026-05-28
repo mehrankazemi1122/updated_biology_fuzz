@@ -115,21 +115,37 @@ jobs:
           pattern: chunk-results-*
           merge-multiple: true
 
-      - name: Merge JSON Reports
+      - name: Merge JSON Reports (Memory Efficient)
         run: |
-          python3 -c "
-          import json, glob
-          all_findings = []
-          for f in glob.glob('result_*.json'):
-              try:
-                  data = json.load(open(f))
-                  if 'results' in data:
-                      all_findings.extend(data['results'])
-              except: pass
-          final_output = {'ffuf_merged_results': all_findings}
+          cat << 'EOF' > merge_results.py
+          import json, glob, gc
+
           with open('final_report.json', 'w') as out:
-              json.dump(final_output, out, indent=2)
-          "
+              # Start the JSON structure manually
+              out.write('{"ffuf_merged_results": [\n')
+              first = True
+              
+              # Process one file at a time to save memory
+              for f in glob.glob('result_*.json'):
+                  try:
+                      with open(f, 'r') as infile:
+                          data = json.load(infile)
+                          for item in data.get('results', []):
+                              if not first:
+                                  out.write(',\n')
+                              json.dump(item, out)
+                              first = False
+                      
+                      # Force memory cleanup before the next file
+                      del data
+                      gc.collect()
+                  except Exception as e:
+                      pass
+              
+              # Close the JSON structure
+              out.write('\n]}\n')
+          EOF
+          python3 merge_results.py
 
       - name: Upload Final Report
         uses: actions/upload-artifact@v4
