@@ -36,7 +36,7 @@ jobs:
           sed -i 's/^\///' all_dirs.txt
           sed -i 's/^\///' wlist1.txt
           
-          cat all_dirs.txt wlist1.txt wlist2.txt 1to3chars.txt words.txt | sed -E 's|/+|/|g' | LC_ALL=C sort -u > full.txt
+          cat all_dirs.txt wlist1.txt wlist2.txt 1to3chars.txt words.txt | sed -E 's|/+|/|g' | sed 's|^/||' | LC_ALL=C sort -u > full.txt
 
       - name: Split Wordlist (20 Parts)
         run: |
