@@ -32,11 +32,13 @@ jobs:
           curl -s https://wordlists-cdn.assetnote.io/data/automated/httparchive_directories_1m_2024_05_28.txt > all_dirs.txt
           curl -s https://raw.githubusercontent.com/mehrankazemi1122/biology_Fuzz/main/port_numbers.txt > port_numbers.txt
           curl -s https://raw.githubusercontent.com/PortSwigger/param-miner/master/resources/words | LC_ALL=C sort -u > words.txt
+          curl -s https://wordlists-cdn.assetnote.io/data/automated/httparchive_html_htm_2026_02_27.txt | sort -u > html_htm.txt
           
           sed -i 's/^\///' all_dirs.txt
           sed -i 's/^\///' wlist1.txt
           
-          cat all_dirs.txt wlist1.txt wlist2.txt 1to3chars.txt words.txt | sed -E 's|/+|/|g' | sed 's|^/||' | LC_ALL=C sort -u > full.txt
+          cat html_htm.txt all_dirs.txt wlist1.txt wlist2.txt 1to3chars.txt words.txt | sed -E 's|/+|/|g' | sed 's|^/||' | LC_ALL=C sort -u > full.txt
+          cat full.txt | wc -l
 
       - name: Split Wordlist (20 Parts)
         run: |
