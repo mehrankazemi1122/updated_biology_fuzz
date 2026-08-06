@@ -18,7 +18,7 @@ on:
 
 jobs:
   prepare_wordlist:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Install Crunch
         run: sudo apt-get update && sudo apt-get install -y crunch
